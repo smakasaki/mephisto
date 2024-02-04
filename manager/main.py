@@ -8,6 +8,7 @@ import aio_pika
 import uuid
 import random
 import json
+import numpy as np
 
 
 class KMeansRequest(BaseModel):
@@ -139,46 +140,46 @@ async def send_and_receive_rabbitmq_message(task_data: dict, correlation_id: str
 async def aggregate_centroids(correlation_id: str, background_tasks: BackgroundTasks):
     results_key = f"results:{correlation_id}"
     results = await app.state.redis.hgetall(results_key)
+    original_data_points_json = await app.state.redis.get(f"config:{correlation_id}:data_points")
+    original_data_points = np.array(json.loads(original_data_points_json))
 
     # Инициализация агрегированных данных
     centroid_sums = {}
     centroid_counts = {}
-    total_distance = 0.0
 
-    # Агрегация результатов
+    # Агрегация результатов для расчёта новых центроидов
     for result in results.values():
         data = json.loads(result)
-        centroids = data.get('centroids', [])
-        distance = data.get('total_distance', 0)
-        total_distance += distance
-
-        for centroid in centroids:
+        for centroid in data['centroids']:
             centroid_id = centroid['id']
             coordinates = centroid['coordinates']
             if centroid_id not in centroid_sums:
-                centroid_sums[centroid_id] = [0.0] * len(coordinates)
+                centroid_sums[centroid_id] = np.zeros(len(coordinates))
                 centroid_counts[centroid_id] = 0
-            centroid_sums[centroid_id] = [x + y for x,
-                                          y in zip(centroid_sums[centroid_id], coordinates)]
+            centroid_sums[centroid_id] += np.array(coordinates)
             centroid_counts[centroid_id] += 1
 
-    # Вычисление новых центроидов
-    new_centroids = []
-    for centroid_id, sums in centroid_sums.items():
-        count = centroid_counts[centroid_id]
-        new_centroids.append({
-            "id": centroid_id,
-            "coordinates": [x / count for x in sums]
-        })
+        # Создание списка новых центроидов на основе агрегированных данных
+    new_centroids = [
+        {'id': centroid_id, 'coordinates': (
+            centroid_sums[centroid_id] / centroid_counts[centroid_id]).tolist()}
+        for centroid_id in centroid_sums
+    ]
+
+    # Преобразование списка центроидов в массив numpy для расчёта расстояния
+    new_centroids_array = np.array(
+        [centroid['coordinates'] for centroid in new_centroids])
+
+    # Пересчёт общего расстояния
+    total_distance = calculate_total_distance(
+        original_data_points, new_centroids_array)
 
     # Проверка условия сходимости
     convergence_threshold = 0.01
-    prev_distance = await app.state.redis.get(f"total_distance:{correlation_id}")
-    delta = abs(float(prev_distance) - total_distance)
-
-    print('\nPrev distance: ' + str(prev_distance))
-    print('Total distance: ' + str(total_distance))
-    print('Delta: ' + str(delta) + '\n')
+    prev_distance_str = await app.state.redis.get(f"total_distance:{correlation_id}")
+    prev_distance = float(prev_distance_str) if prev_distance_str else 0.0
+    delta = abs(prev_distance - total_distance)
+    print(delta)
 
     if delta > convergence_threshold:
         await app.state.redis.set(f"total_distance:{correlation_id}", total_distance)
@@ -207,6 +208,19 @@ async def aggregate_centroids(correlation_id: str, background_tasks: BackgroundT
     else:
         # Условие сходимости выполнено
         print("Convergence achieved.")
+
+
+def calculate_total_distance(data_points, centroids):
+    total_distance = 0.0
+    for point in data_points:
+        # Convert point to a numpy array for vectorized operations
+        point_array = np.array(point)
+        # Calculate the distance from this point to all centroids
+        distances = np.sqrt(np.sum((centroids - point_array) ** 2, axis=1))
+        # Add the smallest distance to the total_distance
+        total_distance += np.min(distances)
+    return total_distance
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
