@@ -5,12 +5,20 @@ import numpy as np
 from sklearn.cluster import KMeans
 
 
-async def process_data(data_points, num_clusters, max_iterations):
+async def process_data(data_points, num_clusters, max_iterations, initial_centroids):
     if num_clusters <= 0:  # Проверка корректности количества кластеров
         return "Ошибка: количество кластеров должно быть больше 0"
 
+    # Проверка и преобразование initial_centroids для использования в KMeans
+    if isinstance(initial_centroids, str) and initial_centroids in ['k-means++', 'random']:
+        init_method = initial_centroids
+    else:
+        # Убедиться, что initial_centroids являются массивом NumPy правильной размерности
+        init_method = np.array(initial_centroids) if len(
+            initial_centroids) > 0 else 'k-means++'
+
     kmeans = KMeans(n_clusters=num_clusters,
-                    max_iter=max_iterations, init='random', n_init=1)
+                    max_iter=max_iterations, init=init_method)
     kmeans.fit(data_points)
 
     centroids = kmeans.cluster_centers_.tolist()  # Преобразование в список
@@ -45,7 +53,11 @@ async def worker():
                 data_points = np.array(data["data_points"])
                 num_clusters = data["num_clusters"]
                 max_iterations = data["max_iterations"]
-                response_message = await process_data(data_points, num_clusters, max_iterations)
+                # Учтено наличие или отсутствие initial_centroids
+                initial_centroids = data.get("initial_centroids", 'k-means++')
+                if initial_centroids != 'k-means++':
+                    initial_centroids = np.array(initial_centroids)
+                response_message = await process_data(data_points, num_clusters, max_iterations, initial_centroids)
             else:
                 response_message = "Ошибка: неправильный формат данных"
 
