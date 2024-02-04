@@ -38,7 +38,7 @@ async def process_data(data_points, num_clusters, max_iterations, initial_centro
 
 
 async def worker():
-    connection = await aio_pika.connect_robust("amqp://user:password@localhost/")
+    connection = await aio_pika.connect_robust("amqp://user:password@rabbitmq/")
     channel = await connection.channel()
 
     await channel.set_qos(prefetch_count=1)
@@ -46,7 +46,6 @@ async def worker():
 
     async for message in request_queue:
         async with message.process():
-            print("Received request:", message.body.decode())
             data = json.loads(message.body.decode())
 
             if "data_points" in data and "num_clusters" in data and "max_iterations" in data:

@@ -12,6 +12,11 @@ services:
     volumes:
       - "rabbitmq_data:/var/lib/rabbitmq"
       - "rabbitmq_log:/var/log/rabbitmq"
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
   redis:
     image: "redis:latest"
@@ -19,6 +24,34 @@ services:
       - "6379:6379" # Default Redis port
     volumes:
       - "redis_data:/data"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  manager:
+    build: .
+    volumes:
+      - .:/app
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: .
+    command: python ./worker/worker.py
+    volumes:
+      - .:/app
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   rabbitmq_data:

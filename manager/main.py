@@ -39,14 +39,14 @@ def split_data(data_points: List[List[float]], num_parts: int) -> List[List[List
 
 
 async def create_rabbitmq_connection():
-    connection = await aio_pika.connect_robust("amqp://user:password@localhost/")
+    connection = await aio_pika.connect_robust("amqp://user:password@rabbitmq/")
     return connection
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.rabbitmq_connection = await create_rabbitmq_connection()
-    app.state.redis = await AsyncRedis(host='localhost', port=6379, db=0, decode_responses=True)
+    app.state.redis = await AsyncRedis(host='redis', port=6379, db=0, decode_responses=True)
     yield
     await app.state.rabbitmq_connection.close()
     await app.state.redis.aclose()
@@ -100,7 +100,6 @@ async def get_result(correlation_id: str):
         raise HTTPException(
             status_code=404, detail="Result not available yet or correlation_id is invalid."
         )
-    results = {key: value for key, value in results.items()}
     return {"correlation_id": correlation_id, "centroids": centroids, "assignments": assignments, }
 
 
@@ -231,9 +230,6 @@ async def save_results(correlation_id: str, centroids, data_points: np.ndarray):
     centroids_array = np.array([centroid['coordinates']
                                for centroid in centroids])
 
-    # Ensure data_points is a NumPy array with the right shape.
-    # data_points should already be an np.ndarray, where each row is a point's coordinates.
-
     # Initialize a list to hold the assignment of each point to a cluster.
     assignments = []
 
@@ -243,7 +239,7 @@ async def save_results(correlation_id: str, centroids, data_points: np.ndarray):
         point_array = point.reshape(1, -1)
         distances = np.sqrt(
             np.sum((centroids_array - point_array) ** 2, axis=1))
-        cluster_id = np.argmin(distances)
+        cluster_id = int(np.argmin(distances))  # Cast numpy.int64 to int
         assignments.append(cluster_id)
 
     # Serialize and save the centroids and assignments to Redis.
